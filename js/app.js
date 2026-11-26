@@ -236,8 +236,12 @@ export function friendlyAIError(e) {
   switch (code) {
     case 'auth': return 'Gemini rejected the API key. Check it in Settings (it may have been deleted or mistyped).';
     case 'rate_limit': return `Gemini’s free-tier limit was reached. Your entry is saved and will be analyzed automatically${e.retryAfterSec ? ` in about ${Math.ceil(e.retryAfterSec)}s` : ' later'}.`;
-    case 'network': return 'Couldn’t reach Gemini (offline or network error). Your entry is saved and will be analyzed when you’re back online.';
-    case 'bad_response': return 'Gemini replied with something unreadable. Tap Re-analyze to try again.';
+    case 'network': {
+      const detail = String(e?.message || '').slice(0, 200);
+      if (e?.status >= 500) return `Gemini’s servers are busy right now (tried several models). Your entry is saved; tap Re-analyze in a few minutes. Details: ${detail}`;
+      return `Couldn’t reach Gemini. Your entry is saved and will be analyzed when the connection works. Details: ${detail}`;
+    }
+    case 'bad_response': return `Gemini couldn’t process the request. Tap Re-analyze to try again. Details: ${String(e?.message || '').slice(0, 200)}`;
     case 'too_large': return 'This recording is too large to send to Gemini. Try a shorter entry next time.';
     case 'model': return 'The selected Gemini model isn’t available for this key. Pick another model in Settings.';
     case 'aborted': return 'Analysis was cancelled.';

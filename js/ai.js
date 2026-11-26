@@ -567,7 +567,7 @@ export function mapHttpError(status, body, headers) {
     return new AIError('model', `Model unavailable: ${msg}`, extra);
   }
   if (status >= 500 || status === 408) {
-    return new AIError('network', `Gemini server error (${status}), try again later: ${msg}`, extra);
+    return new AIError('network', `Gemini's servers are busy or erroring (${status}): ${msg}`, extra);
   }
   return new AIError('bad_response', `Gemini request failed (${status}): ${msg}`, extra);
 }
@@ -831,7 +831,11 @@ export async function analyzeEntry({
       try {
         resp = await generate(apiKey, m, (s) => buildRequestBody({ ...base, audio, model: m, ...s }), signal, state);
       } catch (err) {
-        if (err instanceof AIError && err.code === 'model') { lastErr = err; continue; }
+        // Try the next model when this one is unavailable, overloaded (5xx) or out of its own
+        // per-model free-tier quota (429). Auth / size / abort errors are not model-specific.
+        const retryable = err instanceof AIError && (
+          err.code === 'model' || err.code === 'rate_limit' || (err.code === 'network' && err.status >= 500));
+        if (retryable) { lastErr = err; continue; }
         throw err;
       }
       const { text: out } = extractText(resp);

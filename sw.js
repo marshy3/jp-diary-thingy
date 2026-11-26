@@ -1,5 +1,5 @@
 // sw.js — versioned cache-first app shell. Gemini requests are never cached.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `hanashi-nikki-${VERSION}`;
 const SHELL = [
   './',

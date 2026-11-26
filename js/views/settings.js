@@ -152,7 +152,7 @@ export async function render(root, app) {
       } catch (e) {
         if (e?.code === 'network') {
           await app.setSetting('apiKey', key);
-          setKeyStatus('Saved, but couldn’t reach Google to test it (offline?).', 'warn');
+          setKeyStatus(`Saved, but the test call failed: ${String(e?.message || '').slice(0, 200)}`, 'warn');
         } else {
           setKeyStatus(app.friendlyAIError(e), 'bad');
         }
