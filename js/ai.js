@@ -60,6 +60,8 @@ export const config = {
   filePollMs: 1500,
   filePollMaxMs: 60000,
   maxOutputTokens: 16384,
+  /** Give up on one generateContent call after this long and move on to the next model. */
+  requestTimeoutMs: 120000,
 };
 
 export class AIError extends Error {
@@ -602,15 +604,33 @@ async function readBody(res) {
 }
 
 /** fetch + JSON + error mapping, with ONE automatic retry on 500/503 (and 504). */
-async function requestJson(url, init, signal) {
+async function requestJson(url, init, signal, { timeoutMs = 0 } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const res = await rawFetch(url, init, signal);
+    // Per-attempt timeout, linked to the caller's signal. A timeout is reported as a 504-style
+    // server error (so analyzeEntry moves on to the next model); a user cancel stays 'aborted'.
+    const ctl = new AbortController();
+    let timedOut = false;
+    const onOuter = () => ctl.abort();
+    signal?.addEventListener?.('abort', onOuter, { once: true });
+    const timer = timeoutMs ? setTimeout(() => { timedOut = true; ctl.abort(); }, timeoutMs) : 0;
+    let res, body;
+    try {
+      res = await rawFetch(url, init, ctl.signal);
+      body = await readBody(res);
+    } catch (err) {
+      if (timedOut && !signal?.aborted) {
+        throw new AIError('network', `Gemini didn't answer within ${Math.round(timeoutMs / 1000)}s`, { status: 504, cause: err });
+      }
+      if (signal?.aborted) throw new AIError('aborted', 'Aborted', { cause: err });
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', onOuter);
+    }
     if (res.ok) {
-      const body = await readBody(res);
       if (typeof body === 'string') throw new AIError('bad_response', 'Gemini returned non-JSON', { status: res.status });
       return { body, res };
     }
-    const body = await readBody(res);
     if (attempt === 0 && [500, 503, 504].includes(res.status)) {
       await sleep(config.retryBaseMs * (1 + Math.random() * 0.5), signal);
       continue;
@@ -780,7 +800,7 @@ async function generate(apiKey, model, makeBody, signal, state) {
         method: 'POST',
         headers: { ...keyHeaders(apiKey), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      }, signal);
+      }, signal, { timeoutMs: config.requestTimeoutMs });
       return resp;
     } catch (err) {
       if (!(err instanceof AIError) || err.status !== 400) throw err;
@@ -803,8 +823,9 @@ async function generate(apiKey, model, makeBody, signal, state) {
  * @returns {Promise<Analysis>}
  */
 export async function analyzeEntry({
-  apiKey, model, wavBlob, metrics, prompt, level = 'N3', recentMistakes = [], signal,
+  apiKey, model, wavBlob, metrics, prompt, level = 'N3', recentMistakes = [], signal, onProgress,
 } = {}) {
+  const progress = (info) => { try { onProgress?.(info); } catch { /* UI callback must not break analysis */ } };
   if (!apiKey || !String(apiKey).trim()) throw new AIError('auth', 'No Gemini API key set');
   if (!wavBlob || typeof wavBlob.size !== 'number' || !wavBlob.size) throw new AIError('bad_response', 'No audio to analyse');
   if (signal?.aborted) throw new AIError('aborted', 'Aborted');
@@ -825,7 +846,8 @@ export async function analyzeEntry({
 
     const models = [model || DEFAULT_MODEL, ...FALLBACK_MODELS].filter((m, i, a) => m && a.indexOf(m) === i);
     let lastErr;
-    for (const m of models.slice(0, 4)) {
+    for (const [i, m] of models.slice(0, 4).entries()) {
+      progress({ model: m, attempt: i + 1, previousError: lastErr ? lastErr.message : null });
       const state = { schemaStyle: 'responseFormat', thinking: true };
       let resp;
       try {

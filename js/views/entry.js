@@ -94,10 +94,16 @@ export async function render(root, app, id) {
     const a = entry.analysis, m = entry.metrics;
     const minSec = Number(app.settings.minSeconds) || 60;
     const hasKey = !!app.settings.apiKey;
-    const busy = entry.status === 'analyzing' || app.inFlight.has(entry.id);
+    // Only a request that is actually running counts as busy. A stored 'analyzing' status with
+    // nothing in flight means the app was closed/reloaded mid-request.
+    const busy = app.inFlight.has(entry.id);
     let status = '';
     if (busy) {
-      status = html`<div class="card status-card"><div class="spinner" aria-hidden="true"></div><p><b>Analyzing…</b> Gemini is listening to your entry. This usually takes 10–40 seconds.</p></div>`;
+      status = html`<div class="card status-card"><div class="spinner" aria-hidden="true"></div><div><p><b>Analyzing…</b> <span data-elapsed></span></p>
+        <p class="small muted" data-progress>Gemini is listening to your entry. This usually takes 20–60 seconds.</p>
+        <button class="btn btn-secondary" data-cancel>Cancel</button></div></div>`;
+    } else if (!a && entry.status === 'analyzing') {
+      status = html`<div class="card nudge" role="alert"><p><b>Analysis was interrupted</b> (the app was closed or reloaded while waiting for Gemini).</p><button class="btn btn-primary" data-reanalyze>Try again</button></div>`;
     } else if (!a && !hasKey) {
       status = html`<div class="card nudge"><p><b>Saved, no feedback yet.</b> Add a free Gemini API key to get corrections, a natural rewrite and pronunciation tips.</p>
         <a class="btn btn-primary" href="#/settings">Add API key</a></div>`;
@@ -230,6 +236,7 @@ export async function render(root, app, id) {
     }
     if (t.dataset.seek != null) { seek(Number(t.dataset.seek), false); return; }
     if (t.dataset.snip != null) { seek(Number(t.dataset.snip), true); return; }
+    if (t.matches('[data-cancel]')) { app.cancelAnalysis(entry.id); return; }
     if (t.matches('[data-reanalyze]')) {
       if (!app.settings.apiKey) { app.navigate('#/settings'); return; }
       if (entry.analysis) {
@@ -252,6 +259,17 @@ export async function render(root, app, id) {
   });
 
   offs.push(app.on('entry', (e) => { if (e?.id === entry.id) { entry = e; paint(); } }));
+  // Live elapsed time + which model is being tried, while a request runs.
+  const tickProgress = () => {
+    const p = app.progress.get(entry.id);
+    const el = root.querySelector('[data-elapsed]');
+    if (el && p) el.textContent = `${Math.floor((Date.now() - p.startedAt) / 1000)}s`;
+    const pe = root.querySelector('[data-progress]');
+    if (pe && p && p.attempt > 1) pe.textContent = `The first model was busy or out of quota, so it's now trying ${p.model} (${p.attempt} of 4).`;
+  };
+  const progressTimer = setInterval(tickProgress, 1000);
+  offs.push(() => clearInterval(progressTimer));
+  offs.push(app.on('progress', (eid) => { if (eid === entry.id) { if (!app.inFlight.has(eid)) paint(); else tickProgress(); } }));
   offs.push(app.on('audio', (eid) => {
     if (eid !== entry.id) return;
     const el = root.querySelector('[data-audio]');

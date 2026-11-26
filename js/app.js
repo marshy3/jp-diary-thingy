@@ -79,6 +79,11 @@ export const app = {
   runQueue,
   friendlyAIError,
   inFlight: new Set(),
+  /** id -> { startedAt, model, attempt, previousError } while a Gemini request is running */
+  progress: new Map(),
+  /** id -> AbortController for the running analysis (Cancel button) */
+  aborts: new Map(),
+  cancelAnalysis(id) { app.aborts.get(id)?.abort(); },
 };
 
 // ---------- pipeline ----------
@@ -116,9 +121,13 @@ async function saveRecording({ blob, mimeType, durationSec }, prompt, onStep = (
  * Measure (if needed) then send to Gemini (if key). Throws on AI failure (entry is updated first).
  * Returns { needsKey?:true, analysis? }.
  */
-async function analyzeEntryById(id, { onStep = () => {}, force = false, signal } = {}) {
+async function analyzeEntryById(id, { onStep = () => {}, force = false, signal: outerSignal } = {}) {
   if (app.inFlight.has(id)) throw Object.assign(new Error('Already analyzing this entry.'), { code: 'busy' });
   app.inFlight.add(id);
+  const ctl = new AbortController();
+  outerSignal?.addEventListener?.('abort', () => ctl.abort(), { once: true });
+  app.aborts.set(id, ctl);
+  const signal = ctl.signal;
   try {
     let entry = app.getEntry(id) || await db.getEntry(id);
     if (!entry) throw new Error('Entry not found');
@@ -210,6 +219,12 @@ async function analyzeEntryById(id, { onStep = () => {}, force = false, signal }
         level: level || 'N3',
         recentMistakes: collectRecentMistakes(others, 15),
         signal,
+        onProgress: (info) => {
+          const prev = app.progress.get(id);
+          app.progress.set(id, { startedAt: prev?.startedAt || Date.now(), ...info });
+          app.emit('progress', id);
+          onStep('ai', 'active', info.attempt > 1 ? `First model busy, trying ${info.model}…` : '');
+        },
       });
       await app.patchEntry(id, { analysis, status: 'done', error: null });
       const newCards = cardsFromAnalysis(analysis?.cards, id, app.cards);
@@ -228,6 +243,9 @@ async function analyzeEntryById(id, { onStep = () => {}, force = false, signal }
     }
   } finally {
     app.inFlight.delete(id);
+    app.aborts.delete(id);
+    app.progress.delete(id);
+    app.emit('progress', id);
   }
 }
 
