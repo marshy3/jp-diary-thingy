@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>話し日記 Hanashi Nikki</title>
+  <meta name="description" content="A daily Japanese speaking diary with feedback.">
+  <meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c1a17" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="話し日記">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="modulepreload" href="./js/app.js">
+</head>
+<body>
+  <div id="app">
+    <main id="view" class="view"><p class="boot muted">読み込み中… Loading</p></main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="modal" class="modal" aria-modal="true"></dialog>
+  <noscript><p class="card">Hanashi Nikki needs JavaScript.</p></noscript>
+  <script nomodule>document.getElementById('view').innerHTML = '<div class="card"><h2>Browser too old</h2><p>Please update to iOS 16.4+ Safari or a current Chrome.</p></div>';</script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
